@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.0.35] - 2026-02-22
+
+- fixes for g3x and serial port detect
+
+
+
 ## [0.0.34] - 2025-06-20
 
 - text formating. and help updates.
