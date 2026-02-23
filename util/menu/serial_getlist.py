@@ -5,6 +5,7 @@ import json
 from typing import List, Dict, Optional, Tuple
 import sys
 import os
+import glob
 import argparse
 # Add project root to path to allow importing from lib
 # Assumes script is run from project root or PYTHONPATH is set correctly
@@ -300,14 +301,19 @@ def get_serial_ports() -> List[Dict[str, str]]:
     """
     Get a list of available serial ports with their descriptions.
     Ports with missing or "n/a" descriptions are sorted to the bottom.
+
+    On Linux, pyserial's comports() only returns ports with USB/PCI hardware
+    IDs and skips platform UARTs (e.g. ttyAMA0 on Raspberry Pi). We supplement
+    the list by scanning /dev/ttyAMA* and /dev/ttyS* directly.
     
     Returns:
         List[Dict[str, str]]: List of dictionaries containing port information
                              Each dict has 'port', 'description', and 'hwid' keys
     """
     ports = []
-    
-    # Iterate through all available serial ports
+    seen = set()
+
+    # Iterate through all available serial ports reported by pyserial
     for port in serial.tools.list_ports.comports():
         port_info = {
             'port': port.device,
@@ -322,10 +328,29 @@ def get_serial_ports() -> List[Dict[str, str]]:
             'pid': port.pid,
         }
         ports.append(port_info)
-    
+        seen.add(port.device)
+
+    # On Linux, also scan platform UARTs that pyserial misses (ttyAMA*, ttyS*)
+    for pattern in ['/dev/ttyAMA*', '/dev/ttyS*']:
+        for dev in sorted(glob.glob(pattern)):
+            if dev not in seen:
+                ports.append({
+                    'port': dev,
+                    'description': 'n/a',
+                    'hwid': 'n/A',
+                    'serial_number': None,
+                    'interface': None,
+                    'location': None,
+                    'manufacturer': None,
+                    'product': None,
+                    'vid': None,
+                    'pid': None,
+                })
+                seen.add(dev)
+
     # Sort ports - putting ones with missing/n/a descriptions at the bottom
     def port_sort_key(port):
-        desc = port['description'].lower()
+        desc = (port['description'] or '').lower()
         if not desc or desc == 'n/a':
             return (1, port['port'])  # Will sort after valid descriptions
         return (0, port['port'])      # Will sort before invalid descriptions
