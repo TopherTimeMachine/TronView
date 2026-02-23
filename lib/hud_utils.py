@@ -11,7 +11,15 @@ from configupdater import ConfigUpdater
 # load config.cfg file if it exists.
 # set comment_prefixes to '/' and allow_no_value to True so that comments will not be removed.
 configParser: configparser.ConfigParser = configparser.ConfigParser()
-configParser.read("config.cfg")
+_config_path = "config.cfg"
+if not os.path.exists(_config_path):
+    print(f"ERROR: config.cfg not found. Please copy config_example.cfg to config.cfg")
+    sys.exit(1)
+elif not os.access(_config_path, os.R_OK):
+    print(f"ERROR: config.cfg exists but is not readable. Check file permissions.")
+    sys.exit(1)
+else:
+    configParser.read(_config_path)
 
 def readConfig(section, name, defaultValue=0, show_error=False,hideoutput=True) -> str:
     """
