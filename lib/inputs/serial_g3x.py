@@ -44,7 +44,7 @@ def safeInt(value):
 
 class serial_g3x(Input):
     def __init__(self):
-        self.name = "garmin_g3x"
+        self.name = "serial_g3x"
         self.version = 1.2
         self.inputtype = "serial"
 
