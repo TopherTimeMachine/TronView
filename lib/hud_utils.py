@@ -13,9 +13,14 @@ from configupdater import ConfigUpdater
 configParser: configparser.ConfigParser = configparser.ConfigParser()
 _config_path = "config.cfg"
 if not os.path.exists(_config_path):
-    print(f"ERROR: config.cfg not found. Please copy config_example.cfg to config.cfg")
-    sys.exit(1)
-elif not os.access(_config_path, os.R_OK):
+    _example_path = "config_example.cfg"
+    if os.path.exists(_example_path):
+        shutil.copy2(_example_path, _config_path)
+        print(f"config.cfg not found. Copied config_example.cfg to config.cfg")
+    else:
+        print(f"ERROR: config.cfg not found and config_example.cfg is missing. Cannot create config.cfg")
+        sys.exit(1)
+if not os.access(_config_path, os.R_OK):
     print(f"ERROR: config.cfg exists but is not readable. Check file permissions.")
     sys.exit(1)
 else:

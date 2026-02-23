@@ -397,7 +397,8 @@ class PortSelectScreen(Screen):
     BINDINGS = [
         Binding("q", "quit", "Quit", show=True),
         Binding("enter", "select_port", "Select", show=True),
-        Binding("escape", "quit", "Quit", show=False),  # Hidden binding for escape
+        Binding("s", "save_and_exit", "Save & Exit", show=True),
+        Binding("escape", "quit", "Quit", show=False),
     ]
 
     # Update __init__ to accept config status flags
@@ -696,6 +697,11 @@ class PortSelectScreen(Screen):
 
     def action_quit(self) -> None:
         """Quit the application."""
+        self.app.exit()
+
+    def action_save_and_exit(self) -> None:
+        """Save current config to disk and exit."""
+        save_config(self.app.config, CONFIG_FILE)
         self.app.exit()
 
     def on_key(self, event) -> None:
