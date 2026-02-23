@@ -54,7 +54,7 @@ from lib import hud_utils
 
 class serial_nmea(Input):
     def __init__(self):
-        self.name = "nmea"
+        self.name = "serial_nmea"
         self.version = 3.01
         self.inputtype = "serial"
 

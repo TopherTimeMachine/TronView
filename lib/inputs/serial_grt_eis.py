@@ -25,7 +25,7 @@ import struct  # Add this import at the top with other imports
 
 class serial_grt_eis(Input):
     def __init__(self):
-        self.name = "grt_eis"
+        self.name = "serial_grt_eis"
         self.version = 1.0
         self.inputtype = "serial"
         self.engineData = EngineData()

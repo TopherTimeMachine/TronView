@@ -21,7 +21,7 @@ import struct  # Add this import at the top with other imports
 
 class serial_skyview(Input):
     def __init__(self):
-        self.name = "dynon_skyview"
+        self.name = "serial_skyview"
         self.version = 1.0
         self.inputtype = "serial"
         self.EOL = 10

@@ -18,7 +18,7 @@ from lib.common.dataship.dataship_air import AirData
 
 class serial_d100(Input):
     def __init__(self):
-        self.name = "dynon_d100"
+        self.name = "serial_d100"
         self.version = 1.0
         self.inputtype = "serial"
         self.imuData = IMUData()

@@ -13,7 +13,7 @@ import time
 
 class serial_flyonspeed2efisdata(Input):
     def __init__(self):
-        self.name = "FlyOnSpeed2EfisOut"
+        self.name = "serial_flyonspeed2efisdata"
         self.version = 1.0
         self.inputtype = "serial"
 

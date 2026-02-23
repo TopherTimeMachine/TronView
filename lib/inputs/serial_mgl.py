@@ -26,7 +26,7 @@ import traceback
 
 class serial_mgl(Input):
     def __init__(self):
-        self.name = "mgl"
+        self.name = "serial_mgl"
         self.version = 1.0
         self.inputtype = "serial"
 
