@@ -6,12 +6,13 @@
 Project for connecting EFIS or any external sensor data to a Screen, HUD, or AR glasses.  This was created for the aviation community but can be used for any application where you want to display data in a custom GUI (and interact with it).
 
 ![cockpit1](docs/efis_cockpit1.jpeg?raw=true)
-## Active development! (June 2025)
+## Active development! (Feb 2026)
 If you want to help with development or testing please join our [Join Discord](https://discord.gg/pdnxWa32aW) sever.
-We are working on several new features. 
-- Meshtastic integration (Working)
+We are working on several new features.
+- AI Hat + 2 intergation
+- MeshCore intergration.
+- Meshtastic integration (Done)
 - Video Input (Done)
-- Add images to screen design (Done)
 - Show/Hide screen modules based on key commands or other inputs. (event handlers)
 - Moving Map.
 
