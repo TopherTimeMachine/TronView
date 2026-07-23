@@ -57,6 +57,18 @@
 
   Garmin G3X EFIS Serial Protocol Link: https://drive.google.com/open?id=1uRRO-wdG7ya6_6-CfDVrZaKJsiYit-lm
 
+# OnSpeed Data
+
+  OnSpeed Gen3 emits its native display-serial stream (86-byte `#4` frames at 40 Hz, 115200 8N1) from the box's display UART — the same wire the OnSpeed M5Stack display consumes. It carries attitude, IAS, percent-lift AOA at tenths resolution, the aircraft's per-flap calibrated AOA band anchors (which drive the HUD AOA module's chevron/donut colors), flap position, VSI, OAT, G loads, G-onset rate, and deceleration rate.
+
+  OnSpeed Display Serial Protocol reference: https://dev.flyonspeed.org/reference/serial-protocol/
+
+  Requires OnSpeed firmware v4.25 or later with `SERIALOUTFORMAT=ONSPEED` (the default). The wire is versioned by its frame magic; older-firmware frames are dropped rather than mis-parsed.
+
+  Live: `python3 main.py --in1 serial_onspeedaoa` (set the port in config.cfg under `[serial_onspeedaoa]`). The default screen's HUD AOA and Slip Skid modules pick the data up directly; the OnSpeed extras are bindable from the screen editor as `airData[N].OnSpeed_*` fields.
+
+  Playback: any recording of the raw wire bytes plays back with `--in1 serial_onspeedaoa -e --playfile1 FILE.dat` — TronView's own data recorder writes one while flying, or capture the UART with any serial logger.
+
 # Stratux Data
 
   Recorded data for stratux is saved in the example data.  stratux_1.dat shows traffic near by.  Like 0.5 miles away.

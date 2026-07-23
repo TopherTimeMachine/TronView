@@ -30,7 +30,7 @@ We are working on several new features.
 - Display flight data in Knots, Standard, Metric, F or C
 - Designed for Raspberry Pi 4/5 but also runs on Mac OSx, Windows, and other linux systems.
 - Show NAV needles for approaches. (If NAV data is available)
-- Use multiple data input sources, (MGL, G3x, Dynon, GRT EIS, iLevil BOM, Stratux, Analog CDI via ADS1115, IMU BNO055 & BNO085, Generic Serial Logger, Joystick)
+- Use multiple data input sources, (MGL, G3x, Dynon, GRT EIS, iLevil BOM, Stratux, OnSpeed AOA, Analog CDI via ADS1115, IMU BNO055 & BNO085, Generic Serial Logger, Joystick)
 
 
 # Quick Start for Raspberry Pi and Mac OS

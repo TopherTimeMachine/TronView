@@ -306,6 +306,7 @@ while $RUN_MENU_AGAIN; do
                                 "serial_d100" "Dynon D100 Serial" OFF \
                                 "serial_skyview" "Dynon Skyview Serial" OFF \
                                 "serial_g3x" "Garmin G3x Serial" OFF \
+                                "serial_onspeedaoa" "OnSpeed AOA Serial" OFF \
                                 "serial_grt_eis" "Grand Rapids EIS Serial" OFF \
                                 "serial_nmea" "NMEA Serial" OFF \
                                 "gyro_i2c_bno055" "BNO055 IMU i2c (Pi only)" OFF \
