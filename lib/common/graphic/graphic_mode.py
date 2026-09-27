@@ -25,6 +25,43 @@ from lib.common.graphic.edit_dropdown import DropDown
 
 
 #############################################
+## Class: FrameProfiler
+## Frame time breakdown shown in view mode when debug mode is on (press "d").
+## debug 1 = FPS + time spent drawing modules / presenting the frame / waiting on the frame limiter.
+## debug 2 = also show per module draw time.
+## Useful to see if the program is render bound (idle near 0) or has frame time margin.
+class FrameProfiler:
+    def __init__(self):
+        self.font = pygame.font.SysFont("monospace", 16, bold=True)
+        self.reset()
+        self.label = None
+
+    def reset(self):
+        self.frames = 0
+        self.draw_ms = 0.0
+        self.present_ms = 0.0
+        self.idle_ms = 0.0
+        self.start = time.perf_counter()
+
+    def add(self, idle_ms, draw_ms, present_ms):
+        self.frames += 1
+        self.idle_ms += idle_ms
+        self.draw_ms += draw_ms
+        self.present_ms += present_ms
+        elapsed = time.perf_counter() - self.start
+        if elapsed >= 0.5:  # only re-render the text twice a second
+            n = self.frames
+            text = "FPS %.1f | draw %.2fms | present %.2fms | idle %.2fms" % (
+                n / elapsed, self.draw_ms / n, self.present_ms / n, self.idle_ms / n)
+            self.label = self.font.render(text, True, (255, 255, 0), (0, 0, 0))
+            self.reset()
+
+    def draw(self, surface):
+        if self.label is not None:
+            surface.blit(self.label, (5, surface.get_height() - self.label.get_height() - 5))
+
+
+#############################################
 ## Function: main loop
 def main_graphical():
     pygamescreen, size = hud_graphics.initDisplay()
@@ -32,6 +69,8 @@ def main_graphical():
     # init common things.
     maxframerate = hud_utils.readConfigInt("Main", "maxframerate", 40)
     clock = pygame.time.Clock()
+    profiler = FrameProfiler()
+    present_ms = 0.0
 
     exit_graphic_mode = False
     pygame.mouse.set_visible(True)
@@ -43,6 +82,8 @@ def main_graphical():
 
     # create a dropdown menu
     active_dropdown = None
+    dropdown_overlay = None  # cached semi-transparent overlay drawn behind the dropdown
+    mx, my = pygame.mouse.get_pos()
 
     # if shared.CurrentScreen.ScreenObjects exists.. if it doesn't create it as array
     if not hasattr(shared.CurrentScreen, "ScreenObjects"):
@@ -54,7 +95,9 @@ def main_graphical():
     while not shared.Dataship.errorFoundNeedToExit and not exit_graphic_mode:
         pygamescreen.fill((0, 0, 0)) # clear screen
         event_list = pygame.event.get() # get all events
+        t_tick = time.perf_counter()
         time_delta = clock.tick(maxframerate) / 1000.0 # get the time delta and limit the framerate.
+        t_draw = time.perf_counter()
 
         ## loop through events and process them
         for event in event_list:
@@ -95,6 +138,7 @@ def main_graphical():
                         shared.Dataship.debug_mode = 0
                     print("Debug mode: %d" % shared.Dataship.debug_mode)
                     shared.GrowlManager.add_message("Debug mode set : %d" % shared.Dataship.debug_mode)
+                    shared.CurrentScreen.show_FPS = shared.Dataship.debug_mode >= 2  # per module draw times
                 # Exit View Mode, enter Edit Mode
                 elif event.key == pygame.K_e:
                     shared.Dataship.interface = Interface.EDITOR  # enter edit mode
@@ -133,11 +177,12 @@ def main_graphical():
             # check for Mouse events - just for clicking screen objects
             if event.type == pygame.MOUSEBUTTONDOWN or event.type == pygame.FINGERDOWN:
                 if event.type == pygame.FINGERDOWN:
-                    mx, my = event.x, event.y
+                    # finger positions are normalized 0..1
+                    mx, my = int(event.x * pygamescreen.get_width()), int(event.y * pygamescreen.get_height())
                 else:
                     mx, my = pygame.mouse.get_pos()
-                # get button click number
-                button = event.button
+                # get button click number (finger events have no button, treat as left click)
+                button = getattr(event, "button", 1)
                 # button 4 and 5 are the mouse wheel events
                 if button == 4 or button == 5:
                     continue
@@ -154,6 +199,7 @@ def main_graphical():
 
             # send mouse wheel events to the screen objects if the mouse wheel is inside any screenObject
             if event.type == pygame.MOUSEWHEEL:
+                mx, my = pygame.mouse.get_pos()
                 for sObject in shared.CurrentScreen.ScreenObjects[::-1]:
                     if sObject.x <= mx <= sObject.x + sObject.width and sObject.y <= my <= sObject.y + sObject.height:
                         # send a mouse wheel event to the screen object
@@ -166,21 +212,28 @@ def main_graphical():
             sObject.draw(shared.Dataship, shared.smartdisplay, False)  # Never draw toolbar in view mode
 
         if active_dropdown and active_dropdown.visible:
-            # Create a semi-transparent overlay
-            screen_width = shared.smartdisplay.x_end
-            screen_height = shared.smartdisplay.y_end
-            overlay = pygame.Surface((screen_width, screen_height))
-            overlay.fill((0, 0, 0))  # Black background
-            overlay.set_alpha(200)    # 50% transparency (0-255)
-            pygamescreen.blit(overlay, (0, 0))            
+            # Semi-transparent overlay (created once, not every frame)
+            screen_size = (shared.smartdisplay.x_end, shared.smartdisplay.y_end)
+            if dropdown_overlay is None or dropdown_overlay.get_size() != screen_size:
+                dropdown_overlay = pygame.Surface(screen_size)
+                dropdown_overlay.fill((0, 0, 0))  # Black background
+                dropdown_overlay.set_alpha(200)    # mostly opaque (0-255)
+            pygamescreen.blit(dropdown_overlay, (0, 0))
             active_dropdown.draw(pygamescreen)
 
 
         # Draw Growl messages
         shared.GrowlManager.draw(pygamescreen)
 
-        #now make pygame update display.
+        if shared.Dataship.debug_mode > 0:
+            profiler.add((t_draw - t_tick) * 1000, (time.perf_counter() - t_draw) * 1000, present_ms)
+            profiler.draw(pygamescreen)
+
+        # present the frame. This must be the ONLY display update/flip per frame;
+        # modules must never call pygame.display.flip()/update() themselves.
+        t_present = time.perf_counter()
         pygame.display.update()
+        present_ms = (time.perf_counter() - t_present) * 1000
 
 
     

@@ -274,9 +274,9 @@ class stratux_wifi(Input):
                             self.last_read_time = current_time
 
                         if(ias != 32767):
-                            self.airData.IAS = ias # if ias is 32767 then no airspeed given?
-                            self.airData.PALT = pressAlt -5000 # 5000 is sea level.
-                            self.airData.vsi = vSpeed
+                            self.airData.IAS = int(round(ias * 1.15078)) # if ias is 32767 then no airspeed given? (knots -> mph, dataship units are mph)
+                            self.airData.Alt_pres = pressAlt -5000 # 5000 is sea level.
+                            self.airData.VSI = vSpeed # ft/min
 
                         if(msg[4]==2): # if version is 2 then read AOA and OAT
                             self.airData.AOA = AOA
@@ -371,12 +371,16 @@ class stratux_wifi(Input):
                         latLongIncrement = 180.0 / (2**23) # == 0.0000001490116119384765625
                         src_lat = _signed24(msg[6:]) * latLongIncrement
                         src_lon = _signed24(msg[9:]) * latLongIncrement
-                        alt = _thunkByte(msg[12], 0xff, 4) + _thunkByte(msg[13], 0xf0, -4) # alt in feet MSL
-                        src_alt = (alt * 25) - 1000 # convert to feet MSL (from GDL90 format
+                        # Ownship report altitude is PRESSURE altitude (same datum as traffic report altitudes).
+                        # Geometric (GPS) altitude comes separately in message 11.
+                        alt = _thunkByte(msg[12], 0xff, 4) + _thunkByte(msg[13], 0xf0, -4)
+                        src_alt = None if alt == 0xFFF else (alt * 25) - 1000 # 0xFFF = invalid
 
-                        self.gpsData.set_gps_location(src_lat, src_lon, src_alt)
+                        self.gpsData.set_gps_location(src_lat, src_lon, self.gpsData.Alt) # keep geometric alt from msg 11
+                        self.gpsData.AltPressure = src_alt
 
-                        # set source lat/lon/alt. this is what is used to calculate distance to target.
+                        # set source lat/lon/alt. this is what is used to calculate distance and altitude difference to target.
+                        # uses pressure altitude so altDiff compares the same datum as the traffic altitudes.
                         self.targetData.src_lat = src_lat
                         self.targetData.src_lon = src_lon
                         self.targetData.src_alt = src_alt
@@ -385,7 +389,7 @@ class stratux_wifi(Input):
                         if horzVelo == 0xfff:  # no info available
                             self.gpsData.GndSpeed = None
                         else:
-                            self.gpsData.GndSpeed = int(horzVelo) # ground speed in knots
+                            self.gpsData.GndSpeed = int(round(horzVelo * 1.15078)) # knots -> mph (dataship ground speed is mph)
 
                         if(msg[18] != 255):
                             self.gpsData.GndTrack = int(msg[18] * 1.40625)  # track/heading, 0-358.6 degrees
@@ -402,10 +406,10 @@ class stratux_wifi(Input):
 
 
                 elif(msg[1]==11): # GDL OwnershipGeometricAltitude
-                    # get alt from GDL90
-                    self.gpsData.AltPressure = _signed16(msg[2:]) * 5
+                    # geometric (GPS) altitude. resolution 5 ft.
+                    self.gpsData.Alt = _signed16(msg[2:]) * 5
                     if(dataship.debug_mode>1):
-                        print(f"stratux GPS Altitude: {self.gpsData.AltPressure}m")
+                        print(f"stratux GPS Geometric Altitude: {self.gpsData.Alt}ft")
 
                 elif(msg[1]==20): # Traffic report
                     '''
@@ -460,7 +464,7 @@ class stratux_wifi(Input):
                         if horzVelo == 0xfff:  # 4095 indicates no hvelocity info available
                             target.speed = None
                         else:
-                            target.speed = horzVelo # Speed in knots
+                            target.speed = int(round(horzVelo * 1.15078)) # knots -> mph (Target.speed is mph)
 
                         # heading/track
                         heading_raw = msg[18]

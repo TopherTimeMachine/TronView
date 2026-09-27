@@ -25,7 +25,7 @@ class traffic_bar(Module):
         self.name = "Traffic Bar"  # set name
         self.target_font_size = hud_utils.readConfigInt("HUD", "target_font_size", 40)
         self.showTrafficMiles = hud_utils.readConfigInt("HUD", "show_traffic_within_miles", 25)
-        self.fov_x = hud_utils.readConfigInt("HUD", "fov_x", 13.942)
+        self.fov_x = hud_utils.readConfigFloat("HUD", "fov_x", 13.942)
         self.colorTarget = (255,200,130)
         self.colorDetails = (128,128,128) #grey
         self.targetData = TargetData()
@@ -44,8 +44,7 @@ class traffic_bar(Module):
 
         # fonts
         self.font_target = pygame.font.SysFont(None, self.target_font_size)
-        # Create a surface with per-pixel alpha
-        self.surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        self.offscreen_surface = None  # only used if we can't draw directly to the display
 
         # traffic range
         self.fov_x_each_side = self.fov_x / 2
@@ -62,24 +61,28 @@ class traffic_bar(Module):
 
     # called every redraw for the module
     def draw(self, dataship: Dataship, smartdisplay, pos=(0, 0)):
-        x, y = pos
+        # draw directly onto the display at pos (no full size surface to clear and blit).
+        self.surface = self.getDrawSurface(pos)
+        use_offscreen = self.surface is None
+        if use_offscreen:
+            if self.offscreen_surface is None or self.offscreen_surface.get_size() != (self.width, self.height):
+                self.offscreen_surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+            self.surface = self.offscreen_surface
+            self.surface.fill((0, 0, 0, 0))
         
-        # Clear the surface with full transparency
-        self.surface.fill((0, 0, 0, 0))
-        
+        # target bearings are TRUE. convert magnetic heading to true, else fall back to GPS (true) track.
         if self.imuData.mag_head is not None:
-            useHeading = self.imuData.mag_head # use magnetic heading if available.
+            useHeading = (self.imuData.mag_head + self.gpsData.get_mag_decl()) % 360
+        elif self.gpsData is not None:
+            useHeading = self.gpsData.GndTrack
         else:
-            if self.gpsData is not None:
-                useHeading = self.gpsData.GndTrack
-            else:
-                return
+            return
 
-        # Traffic rendering (adjust for new position)
+        # Traffic rendering (coordinates are local to self.surface; it is blitted at pos below)
         if useHeading is not None and self.showTrafficMiles > 0:
             for t in self.targetData.targets:
-                if t.dist is not None and t.dist < self.showTrafficMiles:
-                    result = useHeading - t.brng
+                if t.dist is not None and t.brng is not None and t.dist < self.showTrafficMiles:
+                    result = ((useHeading - t.brng + 180) % 360) - 180
                     if -self.fov_x_each_side < result < self.fov_x_each_side:
                         center_deg = result + self.fov_x_each_side
                         x_offset = self.width - (center_deg / self.x_degree_per_pixel)
@@ -87,15 +90,15 @@ class traffic_bar(Module):
                         # draw distance and altitude
                         txtTargetDist = self.font_target.render(f"{t.dist:.2f}mi {t.alt}ft", True, (0,0,0), self.colorDetails)
                         text_widthD, text_heightD = txtTargetDist.get_size()
-                        self.surface.blit(txtTargetDist, (x + x_offset - int(text_widthD/2), self.height - text_heightD))
+                        self.surface.blit(txtTargetDist, (x_offset - int(text_widthD/2), self.height - text_heightD))
 
                         # draw callsign
                         textTargetCall = self.font_target.render(str(t.callsign), False, (0,0,0),  self.colorTarget )
                         text_widthC, text_heightC = textTargetCall.get_size()
-                        self.surface.blit(textTargetCall, (x + x_offset - int(text_widthC/2), self.height - text_heightC - text_heightD))
+                        self.surface.blit(textTargetCall, (x_offset - int(text_widthC/2), self.height - text_heightC - text_heightD))
 
-        # Use alpha blending when blitting to the screen
-        smartdisplay.pygamescreen.blit(self.surface, pos, special_flags=pygame.BLEND_ALPHA_SDL2)
+        if use_offscreen:
+            smartdisplay.pygamescreen.blit(self.surface, pos, special_flags=pygame.BLEND_ALPHA_SDL2)
 
 
 
@@ -129,7 +132,7 @@ class traffic_bar(Module):
                 "post_change_function": "changeHappened"
             },
             "fov_x": {
-                "type": "int",
+                "type": "float",
                 "default": self.fov_x,
                 "min": 10,
                 "max": 30,

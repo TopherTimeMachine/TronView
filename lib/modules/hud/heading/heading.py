@@ -174,14 +174,18 @@ class heading(Module):
 
         if self.imuData.mag_head is not None:
             hdg_hdg = self.imuData.mag_head
-            gnd_trk = self.gpsData.GndTrack if self.gpsData.GndTrack is not None else self.imuData.mag_head
+            # GPS track is TRUE; convert it to magnetic so it can be shown on the magnetic heading tape.
+            if self.gpsData.GndTrack is not None:
+                gnd_trk = (self.gpsData.GndTrack - self.gpsData.get_mag_decl()) % 360
+            else:
+                gnd_trk = self.imuData.mag_head
         elif self.gpsData.GndTrack is not None:
             hdg_hdg = self.gpsData.GndTrack
             gnd_trk = self.gpsData.GndTrack
         else:
             # Draw X if no valid heading data
-            pygame.draw.line(self.pygamescreen, (255, 0, 0), [self.width // 2 - 10, self.height // 2], [self.width // 2 + 10, self.height // 2], 3)
-            pygame.draw.line(self.pygamescreen, (255, 0, 0), [self.width // 2, self.height // 2 - 10], [self.width // 2, self.height // 2 + 10], 3)
+            pygame.draw.line(self.pygamescreen, (255, 0, 0), [x + self.width // 2 - 10, y + self.height // 2], [x + self.width // 2 + 10, y + self.height // 2], 3)
+            pygame.draw.line(self.pygamescreen, (255, 0, 0), [x + self.width // 2, y + self.height // 2 - 10], [x + self.width // 2, y + self.height // 2 + 10], 3)
             return
 
         # Initialize current_display_hdg if None
@@ -199,8 +203,13 @@ class heading(Module):
         if (abs(self.current_display_hdg - (self.old_hdg_hdg or 0)) > 0.1 or 
             self.old_gnd_trk != gnd_trk):
             
-            self.hdg = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
-            self.trk = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+            # reuse the tape surface (only reallocate if the module was resized). the track marker
+            # is drawn onto the same surface so only one blit is needed per frame.
+            if self.hdg.get_size() != (self.width, self.height) or not (self.hdg.get_flags() & pygame.SRCALPHA):
+                self.hdg = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+            else:
+                self.hdg.fill((0, 0, 0, 0))
+            self.trk = self.hdg
 
             center_x = self.width // 2
 
@@ -258,7 +267,6 @@ class heading(Module):
 
         # Draw the heading and track surfaces at the specified position
         self.pygamescreen.blit(self.hdg, (x, y))
-        self.pygamescreen.blit(self.trk, (x, y))
 
     # called before screen draw.  To clear the screen to your favorite color.
     def clear(self):

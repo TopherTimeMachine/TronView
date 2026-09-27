@@ -120,6 +120,25 @@ class Target(object):
         
 
 #############################################
+## Function: _read_ignore_traffic_beyond_distance
+## read [Main] ignore_traffic_beyond_distance from config (statute miles).
+## also accepts the old misspelled key "ignore_traffic_beyound_distance" so existing configs keep working.
+def _read_ignore_traffic_beyond_distance(default=30):
+    from lib import hud_utils
+    value = hud_utils.readConfig("Main", "ignore_traffic_beyond_distance", None)
+    if value is None:
+        value = hud_utils.readConfig("Main", "ignore_traffic_beyound_distance", None)
+        if value is not None:
+            print("config: 'ignore_traffic_beyound_distance' is misspelled. Please rename it to 'ignore_traffic_beyond_distance'")
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        print(f"config: invalid ignore_traffic_beyond_distance '{value}'. Using {default}")
+        return default
+
+#############################################
 ## Class: TargetData
 class TargetData(object):
     def __init__(self):
@@ -156,8 +175,8 @@ class TargetData(object):
         self.meshtastic_node_device_id = None
         self.meshtastic_node_device_name = None
 
-        # check if we should ignore traffic beyond a certain distance (in miles.)
-        self.ignore_traffic_beyond_distance = 30
+        # check if we should ignore traffic beyond a certain distance (in statute miles, same as Target.dist). 0 = no limit.
+        self.ignore_traffic_beyond_distance = _read_ignore_traffic_beyond_distance()
 
         # list of target messages
         self.target_payload_messages: list[TargetPayloadMessage] = []
@@ -316,15 +335,18 @@ class TargetData(object):
 
     # go through targets, update,  and remove old ones.
     def cleanUp(self,dataship):
-        for i, t in enumerate(self.targets):
-            self.targets[i].age = int(time.time() - self.targets[i].time) # track age last time this target was updated.
+        # iterate over a copy. removing items from the list while enumerating it skips targets.
+        now = time.time()
+        for t in list(self.targets):
+            t.age = int(now - t.time) # track age last time this target was updated.
             # check if it's a buoy we dropped.. if so update it.
-            if(self.targets[i].buoyNum != None):
-                self.addTarget(self.targets[i]) # update it by adding it again.
-            # if old target then remove it...    
-            if(self.targets[i].age > 100):
-                self.targets[i].old = True
-                self.remove(self.targets[i].callsign)
+            if(t.buoyNum != None):
+                self.addTarget(t) # update it by adding it again.
+            # if old target then remove it...
+            if(t.age > 100):
+                t.old = True
+                self.remove(t.callsign)
+        self.count = len(self.targets)
 
     # clear all buoy targets
     def clearBuoyTargets(self):
@@ -363,8 +385,12 @@ class TargetData(object):
                 return
             
         # if alt was passed in then add it to the altitude of the aircraft.
-        if(alt != None): t.alt = dataship.gpsData[0].Alt + alt
-        else: t.alt = dataship.gpsData[0].Alt
+        # use the same altitude datum as altDiff is calculated from (traffic source alt) so the buoy is not
+        # offset by the difference between pressure and GPS altitude.
+        base_alt = self.src_alt if self.src_alt is not None else dataship.gpsData[0].Alt
+        if base_alt is None: base_alt = 0
+        if(alt != None): t.alt = base_alt + alt
+        else: t.alt = base_alt
 
         # check if mag_head is set.  if not then use the gndTrack from the gpsData object.
         if(len(dataship.imuData) > 0): t.track = dataship.imuData[0].mag_head

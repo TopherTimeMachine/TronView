@@ -40,24 +40,11 @@ class rollindicator(Module):
             None, int(self.height / 20)
         )
 
-        self.roll_point = pygame.image.load("lib/modules/hud/rollindicator/tick_w.bmp").convert()
-        self.roll_point.set_colorkey((0, 0, 0))
-        self.roll_point_scaled = pygame.transform.scale(
-            self.roll_point, (self.roll_point_size, self.roll_point_size)
-        )
-        self.roll_point_scaled_rect = self.roll_point_scaled.get_rect()
+        self.roll_point_image = pygame.image.load("lib/modules/hud/rollindicator/tick_w.bmp").convert()
+        self.roll_point_image.set_colorkey((0, 0, 0))
+        self.update_roll_point_size()
 
         self.roll_tick = pygame.Surface((self.hsi_size, self.hsi_size), pygame.SRCALPHA)
-        self.roll_point = pygame.Surface(
-            (self.hsi_size, self.hsi_size), pygame.SRCALPHA
-        )
-        self.roll_point.blit(
-            self.roll_point_scaled,
-            (
-                (self.hsi_size / 2) - self.roll_point_scaled_rect.center[0],
-                (self.hsi_size / 2) + 120 - self.roll_point_scaled_rect[1],
-            ),
-        )
         def roint(num):
             return int(round(num))
         # render big tick onto surface.
@@ -118,35 +105,37 @@ class rollindicator(Module):
     # called every redraw for the mod
     def draw(self, dataship: Dataship, smartdisplay, pos=(None, None)):
 
-        x_pos = 0
-        y_pos = 0
-
-        # Calculate center positions
-        x_center = self.width // 2
-        y_center = self.height // 2
-
-        # Determine draw position
+        # tick surface is drawn with its top left at pos. its center is the roll pivot.
         if pos[0] is not None and pos[1] is not None:
             draw_pos = (pos[0], pos[1])
-            x_center = pos[0]
-            y_center = pos[1]
         else:
-            draw_pos = (x_center - 180, y_center - 180)
+            draw_pos = (self.width // 2 - self.hsi_size // 2, self.height // 2 - self.hsi_size // 2)
+        x_center = draw_pos[0] + self.hsi_size // 2
+        y_center = draw_pos[1] + self.hsi_size // 2
 
         # Draw roll ticks
         smartdisplay.pygamescreen.blit(self.roll_tick, draw_pos)
 
-        # Draw roll point
-        roll_point_rotated = pygame.transform.rotate(self.roll_point, self.IMUData.roll)
-        roll_point_rect = roll_point_rotated.get_rect()
-        smartdisplay.pygamescreen.blit(
-            roll_point_rotated,
-            (
-                x_center - roll_point_rect.center[0],
-                y_center - roll_point_rect.center[1],
-            ),
-        )
+        roll = self.IMUData.roll
+        if roll is None:
+            return
 
+        # Draw roll point. only the small pointer is rotated (not a full size surface),
+        # and rotated versions are cached per 0.5 degree.
+        key = int(round(roll * 2))
+        roll_point_rotated = self.roll_point_cache.get(key)
+        if roll_point_rotated is None:
+            roll_point_rotated = pygame.transform.rotate(self.roll_point_scaled, key / 2.0)
+            if len(self.roll_point_cache) > 720:
+                self.roll_point_cache.clear()
+            self.roll_point_cache[key] = roll_point_rotated
+
+        # the pointer sits roll_point_radius pixels below the pivot and swings around it.
+        roll_rad = math.radians(key / 2.0)
+        px = x_center + self.roll_point_radius * math.sin(roll_rad)
+        py = y_center + self.roll_point_radius * math.cos(roll_rad)
+        roll_point_rect = roll_point_rotated.get_rect(center=(int(round(px)), int(round(py))))
+        smartdisplay.pygamescreen.blit(roll_point_rotated, roll_point_rect)
 
 
     # called before screen draw.  To clear the screen to your favorite color.
@@ -173,9 +162,12 @@ class rollindicator(Module):
     
     def update_roll_point_size(self):
         self.roll_point_scaled = pygame.transform.scale(
-            self.roll_point, (self.roll_point_size, self.roll_point_size)
+            self.roll_point_image, (self.roll_point_size, self.roll_point_size)
         )
         self.roll_point_scaled_rect = self.roll_point_scaled.get_rect()
+        # pointer center distance below the pivot (top of pointer is 120px below center).
+        self.roll_point_radius = 120 + self.roll_point_size / 2
+        self.roll_point_cache = {}  # rotated pointers keyed by roll in 0.5 deg steps
     
 
 

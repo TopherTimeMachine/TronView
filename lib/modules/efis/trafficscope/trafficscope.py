@@ -90,8 +90,10 @@ class trafficscope(Module):
         self.buttonAdd("send_position", "Send position", self.sendMsg)
 
     def buildBaseSurface(self):
+        # static scope graphics (rings, cross lines, scale labels) are drawn once here and cached.
         self.surfaceBase = pygame.Surface((self.width, self.height),pygame.SRCALPHA)
-        self.surface2= pygame.Surface((self.width, self.height),pygame.SRCALPHA)
+        self.offscreen_surface = None  # only used if we can't draw directly to the display
+        self.surface2 = None  # set each frame in draw()
         #self.surface.set_alpha(128)
         #self.surface2.set_alpha(128)
         #self.surface.fill((0,0,0))
@@ -157,18 +159,30 @@ class trafficscope(Module):
 
     # called every redraw for the mod
     def draw(self, dataship:Dataship, smartdisplay, pos):
-        # clear the surface
-        self.surface2.fill((0,0,0,0))
-        # Clear using the base surface.
+        # draw directly onto the display at pos (no full size surface to clear and blit).
+        self.surface2 = self.getDrawSurface(pos)
+        use_offscreen = self.surface2 is None
+        if use_offscreen:
+            if self.offscreen_surface is None or self.offscreen_surface.get_size() != (self.width, self.height):
+                self.offscreen_surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+            self.surface2 = self.offscreen_surface
+            self.surface2.fill((0,0,0,0))
+        # draw the cached static scope graphics.
         self.surface2.blit(self.surfaceBase, (0, 0))
 
         self.selectedTarget = self.targetData.get_selected_target()  # make sure we have the latest selected target.
 
         # Get aircraft heading or ground track, if both are None then use 0
-        target_heading = self.imuData.yaw if self.imuData.yaw is not None else self.gpsData.GndTrack if self.gpsData.GndTrack is not None else 0
+        # Target bearings and tracks are TRUE, so the IMU (magnetic) heading has declination applied.
+        if self.imuData.yaw is not None:
+            target_heading = (self.imuData.yaw + self.gpsData.get_mag_decl()) % 360
+        elif self.gpsData.GndTrack is not None:
+            target_heading = self.gpsData.GndTrack
+        else:
+            target_heading = 0
 
         def draw_target(t: Target):
-            if t.dist is None or t.dist >= 100 or t.brng is None:
+            if t.dist is None or t.dist > self.scope_scale_miles or t.brng is None:
                 return
 
             brngToUse = (t.brng - target_heading) % 360
@@ -240,7 +254,8 @@ class trafficscope(Module):
                 self.targetDetails[t.callsign]["y"] = target_y
 
         # Separate targets into selected and non-selected lists
-        valid_targets = list(filter(lambda t: t.dist is not None and t.dist < 100 and t.brng is not None, self.targetData.targets))
+        # only targets inside the scope range (outer ring) are drawn.
+        valid_targets = list(filter(lambda t: t.dist is not None and t.dist <= self.scope_scale_miles and t.brng is not None, self.targetData.targets))
         
         selected_targets = []
         other_targets = []
@@ -257,12 +272,13 @@ class trafficscope(Module):
         # Draw selected targets last (so they appear on top)
         list(map(draw_target, selected_targets))
 
+        if use_offscreen:
+            self.pygamescreen.blit(self.surface2, pos)
+
         # if there is a selected target then draw some buttons.
         if self.selectedTarget is not None:
             if self.selectedTarget.type == 101:   # meshtastic type target.
                 self.buttonsDraw(dataship, smartdisplay, pos)  # draw buttons
-
-        self.pygamescreen.blit(self.surface2, pos)
 
     def draw_target_details(self, t: Target, xx, yy, x_text, y_text, label_rect, target_heading):
         if t.speed is not None and t.speed > -1 and t.track is not None:

@@ -52,7 +52,7 @@ class horizon(Module):
         self.caged_mode = 1 # default on
         self.center_circle_mode = hud_utils.readConfigInt("HUD", "center_circle", 4)
 
-        self.fov_x = hud_utils.readConfigInt("HUD", "fov_x", 13.942)
+        self.fov_x = hud_utils.readConfigFloat("HUD", "fov_x", 13.942)
         self.fov_x_each_side = self.fov_x / 2
         self.x_degree_per_pixel = self.fov_x / self.width
         print("HUD x degree_per_pixel: %f"%(self.x_degree_per_pixel))

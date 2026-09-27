@@ -46,7 +46,29 @@ class Module:
         self.height = height
         self.widthCenter = width / 2
         self.heightCenter = height / 2
-    
+
+    def getDrawSurface(self, pos):
+        '''
+        Return a surface that maps directly onto the display at pos, sized to this module.
+        Drawing to it writes straight to the screen (no per-frame fill + blit of a
+        full size temp surface) and is clipped to the module bounds.
+        Coordinates are local to the module (0,0 = top left of module).
+        Returns None if the module is not fully inside the top/left of the screen,
+        in which case the caller should fall back to its own surface.
+        '''
+        x, y = int(pos[0] or 0), int(pos[1] or 0)
+        screen = self.pygamescreen
+        key = (id(screen), screen.get_size(), x, y, self.width, self.height)
+        if getattr(self, "_draw_surface_key", None) == key:
+            return self._draw_surface
+        self._draw_surface_key = key
+        self._draw_surface = None
+        if x >= 0 and y >= 0:
+            rect = pygame.Rect(x, y, int(self.width), int(self.height)).clip(screen.get_rect())
+            if rect.width > 0 and rect.height > 0:
+                self._draw_surface = screen.subsurface(rect)
+        return self._draw_surface
+
     # return a dict of objects that are used to configure the module.
     def get_module_options(self):
         return {}
@@ -252,8 +274,8 @@ class Module:
             # convert miles to kilometers.
             return f"{theVariable * 1.60934:0.1f}"
         elif format_specifier == "nm":
-            # convert miles to nautical miles.
-            return f"{theVariable * 1.852:0.1f}"
+            # convert statute miles to nautical miles.
+            return f"{theVariable * 0.868976:0.1f}"
         elif format_specifier == "ft":
             # it's already in feet.
             return f"{theVariable:0.1f}"
