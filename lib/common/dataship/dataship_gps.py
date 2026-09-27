@@ -29,6 +29,8 @@ class GPSData(object):
         self.AltPressure = None # Pressure altitude in feet (some GPS units report this)
 
         self.Mag_Decl = None # Magnetic variation 10th/deg West = Neg
+        self._calc_decl = None # cached declination computed from Lat/Lon (see get_mag_decl)
+        self._calc_decl_pos = None
 
         self.EWVelDir = None  # E or W
         self.EWVelmag = None  # x.x m/s
@@ -73,6 +75,31 @@ class GPSData(object):
 
         self.LastUpdate = time.time()
     
+    def get_mag_decl(self):
+        '''
+        Magnetic declination in degrees (East = positive, West = negative).
+        True = Magnetic + declination.
+        Uses Mag_Decl if the input source provides it, else computes it from Lat/Lon
+        using the World Magnetic Model. The computed value is cached and only
+        recalculated when position moves more than ~0.5 deg, so it is cheap to call per frame.
+        Returns 0 if unknown.
+        '''
+        if self.Mag_Decl is not None:
+            return self.Mag_Decl
+        if self.Lat is None or self.Lon is None:
+            return self._calc_decl or 0
+        if (self._calc_decl_pos is None or
+                abs(self.Lat - self._calc_decl_pos[0]) > 0.5 or
+                abs(self.Lon - self._calc_decl_pos[1]) > 0.5):
+            try:
+                from lib.geomag import declination
+                self._calc_decl = declination(self.Lat, self.Lon)
+            except Exception as e:
+                print(f"GPSData: declination calc failed: {e}")
+                self._calc_decl = 0
+            self._calc_decl_pos = (self.Lat, self.Lon)
+        return self._calc_decl
+
     # get ground speed in converted format.
     def get_gs(self):
         if(self.GndSpeed == None):

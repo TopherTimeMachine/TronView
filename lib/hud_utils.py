@@ -60,6 +60,12 @@ def readConfigInt(section, name, defaultValue=0):
     return int(readConfig(section, name, defaultValue=defaultValue))
 
 #############################################
+## Function: readConfigFloat
+## use for values that can have decimals (example: fov_x = 13.942). readConfigInt() would truncate them.
+def readConfigFloat(section, name, defaultValue=0.0):
+    return float(readConfig(section, name, defaultValue=defaultValue))
+
+#############################################
 ## Function: readConfigBool
 def readConfigBool(section, name, defaultValue=False):
     theValue = readConfig(section, name, defaultValue=defaultValue)

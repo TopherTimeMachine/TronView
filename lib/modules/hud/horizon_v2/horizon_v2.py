@@ -18,6 +18,10 @@ from lib.common.dataship.dataship_gps import GPSData
 from lib.common.dataship.dataship_imu import IMUData
 from lib.common.dataship.dataship_air import AirData
 
+# constants for the +/-10 degree pitch ladder winglets
+_COS10 = math.cos(math.radians(10))
+_SIN10 = math.sin(math.radians(10))
+
 
 class horizon_v2(Module):
     # called only when object is first created.
@@ -27,10 +31,12 @@ class horizon_v2(Module):
         self.flight_path_color = (255, 0, 255)  # Default color, can be changed via settings
         self.show_targets = True
         self.target_distance_threshold = 10
-        self.fov_x = hud_utils.readConfigInt("HUD", "fov_x", 13.942) # Field of View X in degrees
+        self.fov_x = hud_utils.readConfigFloat("HUD", "fov_x", 13.942) # Field of View X in degrees
         #self.fov_y = hud_utils.readConfigInt("HUD", "fov_y", 13.942) # Field of View y in degrees
         self.target_positions = {}  # Store smoothed positions for each target
         self.target_smoothing = 0.2  # Default smoothing factor (0-1), lower = smoother
+        self.fpm_smoothing = 0.1  # flight path marker smoothing (0-1), lower = smoother
+        self.fpm_min_speed_mph = 20  # below this speed track and flight path angle are not meaningful
 
         # Add new settings for horizon line
         self.horizon_line_color = (255, 165, 0)  # Default default to orange
@@ -77,10 +83,7 @@ class horizon_v2(Module):
         self.font = pygame.font.SysFont(None, 30)
         self.font_target = pygame.font.SysFont("monospace", target_font_size, bold=False)
 
-        self.surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
-        self.ahrs_bg_width = self.surface.get_width()
-        self.ahrs_bg_height = self.surface.get_height()
-        self.ahrs_bg_center = (self.ahrs_bg_width / 2 + 160, self.ahrs_bg_height / 2)
+        self.surface = None  # set each frame in draw(). normally maps directly onto the display.
         self.MainColor = (0, 255, 0)  # main color of hud graphics
         self.line_thickness = hud_utils.readConfigInt("HUD", "line_thickness", 2)
         self.ahrs_line_deg = hud_utils.readConfigInt("HUD", "vertical_degrees", 5)
@@ -89,11 +92,11 @@ class horizon_v2(Module):
         self.caged_mode = 1 # default on
         self.center_circle_mode = hud_utils.readConfigInt("HUD", "center_circle", 4)
 
-        # sampling for flight path.
-        self.readings = []  # Setup moving averages to smooth a bit
-        self.max_samples = 30 # FPM smoothing
-        self.readings1 = []  # Setup moving averages to smooth a bit
-        self.max_samples1 = 30 # Caged FPM smoothing
+        # flight path marker smoothing state.
+        self.fpm_fpa = None
+        self.fpm_drift = None
+        self.pitch_label_cache = {}  # rendered pitch ladder numbers
+        self.offscreen_surface = None  # only used when we can't draw directly to the display
 
         self.x_offset = 0
         self.xCenter = self.width // 2
@@ -118,8 +121,10 @@ class horizon_v2(Module):
     #############################################
     ## Function: generateHudReferenceLineArray
     ## create array of horz lines based on pitch, roll, etc.
+    ## cos_roll/sin_roll can be passed in so trig is computed once per frame instead of once per line.
     def generateHudReferenceLineArray(
         self,screen_width, screen_height, ahrs_center, pxy_div, pitch=0, roll=0, deg_ref=0, line_mode=1,
+        cos_roll=None, sin_roll=None,
     ):
 
         if line_mode == 1:
@@ -141,47 +146,71 @@ class horizon_v2(Module):
             else:
                 length = screen_width * 0.5
 
+        if cos_roll is None or sin_roll is None:
+            roll_rad = math.radians(roll)
+            cos_roll = math.cos(roll_rad)
+            sin_roll = math.sin(roll_rad)
+
         ahrs_center_x, ahrs_center_y = ahrs_center
         px_per_deg_y = screen_height / pxy_div
         pitch_offset = px_per_deg_y * (-pitch + deg_ref)
 
-        center_x = ahrs_center_x - (pitch_offset * math.cos(math.radians(90 - roll)))
-        center_y = ahrs_center_y - (pitch_offset * math.sin(math.radians(90 - roll)))
+        # cos(90 - roll) == sin(roll), sin(90 - roll) == cos(roll)
+        center_x = ahrs_center_x - (pitch_offset * sin_roll)
+        center_y = ahrs_center_y - (pitch_offset * cos_roll)
 
-        x_len = length * math.cos(math.radians(roll))
-        y_len = length * math.sin(math.radians(roll))
+        half_x_len = length * cos_roll / 2
+        half_y_len = length * sin_roll / 2
 
-        start_x = center_x - (x_len / 2)
-        end_x = center_x + (x_len / 2)
-        start_y = center_y + (y_len / 2)
-        end_y = center_y - (y_len / 2)
+        start_x = center_x - half_x_len
+        end_x = center_x + half_x_len
+        start_y = center_y + half_y_len
+        end_y = center_y - half_y_len
 
-        xRot = center_x + math.cos(math.radians(-10)) * (start_x - center_x) - math.sin(math.radians(-10)) * (start_y - center_y)
-        yRot = center_y + math.sin(math.radians(-10)) * (start_x - center_x) + math.cos(math.radians(-10)) * (start_y - center_y)
-        xRot1 = center_x + math.cos(math.radians(+10)) * (end_x - center_x) - math.sin(math.radians(+10)) * (end_y - center_y)
-        yRot1 = center_y + math.sin(math.radians(+10)) * (end_x - center_x) + math.cos(math.radians(+10)) * (end_y - center_y)
-
-        xRot2 = center_x + math.cos(math.radians(-10)) * (end_x - center_x) - math.sin(math.radians(-10)) * (end_y - center_y)
-        yRot2 = center_y + math.sin(math.radians(-10)) * (end_x - center_x) + math.cos(math.radians(-10)) * (end_y - center_y)
-        xRot3 = center_x + math.cos(math.radians(+10)) * (start_x - center_x) - math.sin(math.radians(+10)) * (start_y - center_y)
-        yRot3 = center_y + math.sin(math.radians(+10)) * (start_x - center_x) + math.cos(math.radians(+10)) * (start_y - center_y)
+        # winglets: line end points rotated +/-10 degrees about the line center.
+        c, s = _COS10, _SIN10
+        sdx, sdy = start_x - center_x, start_y - center_y
+        edx, edy = end_x - center_x, end_y - center_y
+        xRot = center_x + c * sdx + s * sdy
+        yRot = center_y - s * sdx + c * sdy
+        xRot1 = center_x + c * edx - s * edy
+        yRot1 = center_y + s * edx + c * edy
+        xRot2 = center_x + c * edx + s * edy
+        yRot2 = center_y - s * edx + c * edy
+        xRot3 = center_x + c * sdx - s * sdy
+        yRot3 = center_y + s * sdx + c * sdy
 
         return [[xRot, yRot],[start_x, start_y],[end_x, end_y],[xRot1, yRot1],[xRot2, yRot2],[xRot3, yRot3]]
 
 
     #############################################
     ## Function: draw_dashed_line
+    ## plain float math (no temporary Point objects per dash).
     def draw_dashed_line(self,surf, color, start_pos, end_pos, width=1, dash_length=10):
-        origin = Point(start_pos)
-        target = Point(end_pos)
-        displacement = target - origin
-        length = len(displacement)
-        slope = Point((displacement.x / length, displacement.y/length))
-
+        x0, y0 = start_pos
+        dx = end_pos[0] - x0
+        dy = end_pos[1] - y0
+        length = int(math.hypot(dx, dy))
+        if length == 0:
+            return
+        ux = dx / length
+        uy = dy / length
+        draw_line = pygame.draw.line
         for index in range(0, length // dash_length, 2):
-            start = origin + (slope * index * dash_length)
-            end = origin + (slope * (index + 1) * dash_length)
-            pygame.draw.line(surf, color, start.get(), end.get(), width)
+            a = index * dash_length
+            b = a + dash_length
+            draw_line(surf, color, (x0 + ux * a, y0 + uy * a), (x0 + ux * b, y0 + uy * b), width)
+
+    #############################################
+    ## Function: get_pitch_label
+    ## pitch ladder numbers are cached instead of being rendered every frame.
+    def get_pitch_label(self, value, color):
+        key = (value, tuple(color))
+        label = self.pitch_label_cache.get(key)
+        if label is None:
+            label = self.font.render(str(value), False, color)
+            self.pitch_label_cache[key] = label
+        return label
 
     def draw_circle(self,surface,color,center,radius,width):
         pygame.draw.circle(
@@ -200,7 +229,8 @@ class horizon_v2(Module):
         height,
         ahrs_center,
         ahrs_line_deg,
-        aircraft,
+        pitch,
+        roll,
         color,
         line_thickness,
         line_mode,
@@ -215,15 +245,15 @@ class horizon_v2(Module):
             return previous + diff * smoothing
 
         # Get current values
-        current_pitch = aircraft.pitch or 0
-        current_roll = aircraft.roll or 0
+        current_pitch = pitch or 0
+        current_roll = roll or 0
         
         # Calculate camera offsets
         camera_yaw = 0
         camera_pitch = 0
         camera_roll = 0
         if self.camera_head_imu is not None and self.camera_head_imu.yaw is not None:
-            camera_yaw = ((self.camera_head_imu.yaw - aircraft.mag_head + 180) % 360) - 180
+            camera_yaw = ((self.camera_head_imu.yaw - self.imuData.yaw + 180) % 360) - 180
             camera_pitch = -self.camera_head_imu.pitch
             camera_roll = self.camera_head_imu.roll
 
@@ -260,41 +290,56 @@ class horizon_v2(Module):
         center_y = height // 2
         adjusted_center = (center_x, center_y)
 
+        # roll trig computed once per frame (not once per ladder line)
+        roll_rad = math.radians(smoothed_roll)
+        cos_roll = math.cos(roll_rad)
+        sin_roll = math.sin(roll_rad)
+
+        # Calculate visible bounds
+        left_bound = 0
+        right_bound = width
+        surface = self.surface
+        draw_lines = pygame.draw.lines
+        text_margin = int(width / 100)
+
         # Draw lines centered on the screen using smoothed values
         for l in range(-60, 61, ahrs_line_deg):
+            if abs(l) > 45:
+                if l % 5 == 0 and l % 10 != 0:
+                    continue
+
             line_coords = self.generateHudReferenceLineArray(
                 width,
                 height,
                 adjusted_center,
                 pxy_div,
                 pitch=smoothed_pitch,
-                roll=smoothed_roll,
                 deg_ref=l,
                 line_mode=line_mode,
+                cos_roll=cos_roll,
+                sin_roll=sin_roll,
             )
 
             # Check if any part of the line is within the visible area
             # Convert line endpoints to screen-relative coordinates
             screen_x1 = line_coords[1][0] - x_offset
             screen_x2 = line_coords[2][0] - x_offset
-            
-            # Calculate visible bounds based on FOV
-            left_bound = (width // 2) - (width // 2)  # 0
-            right_bound = (width // 2) + (width // 2)  # width
-            
+
             # Skip if line is completely outside visible area
             if (screen_x1 < left_bound and screen_x2 < left_bound) or \
                (screen_x1 > right_bound and screen_x2 > right_bound):
                 continue
 
-            if abs(l) > 45:
-                if l % 5 == 0 and l % 10 != 0:
-                    continue
+            # Skip lines that are completely above or below the module
+            min_y = min(line_coords[1][1], line_coords[2][1])
+            max_y = max(line_coords[1][1], line_coords[2][1])
+            if max_y < -20 or min_y > height + 20:
+                continue
 
             # Draw lines
             if l < 0:
                 self.draw_dashed_line(
-                    self.surface,
+                    surface,
                     color,
                     line_coords[1],
                     line_coords[2],
@@ -303,54 +348,36 @@ class horizon_v2(Module):
                 )
                 # Only draw end markers if they're within view
                 if left_bound <= screen_x2 <= right_bound:
-                    pygame.draw.lines(
-                        self.surface,
-                        color,
-                        False,
-                        (line_coords[2], line_coords[4]),
-                        line_thickness
-                    )
+                    draw_lines(surface, color, False, (line_coords[2], line_coords[4]), line_thickness)
                 if left_bound <= screen_x1 <= right_bound:
-                    pygame.draw.lines(
-                        self.surface,
-                        color,
-                        False,
-                        (line_coords[1], line_coords[5]),
-                        line_thickness
-                    )
+                    draw_lines(surface, color, False, (line_coords[1], line_coords[5]), line_thickness)
             else:
                 visible_points = []
-                for point in [line_coords[0], line_coords[1], line_coords[2], line_coords[3]]:
+                for point in (line_coords[0], line_coords[1], line_coords[2], line_coords[3]):
                     screen_x = point[0] - x_offset
                     if left_bound <= screen_x <= right_bound:
                         visible_points.append(point)
-                
+
                 if len(visible_points) >= 2:
-                    pygame.draw.lines(
-                        self.surface,
-                        color,
-                        False,
-                        visible_points,
-                        line_thickness
-                    )
+                    draw_lines(surface, color, False, visible_points, line_thickness)
 
             # Draw degree text if within view
             if l != 0 and l % 5 == 0:
-                text = font.render(str(l), False, color)
+                text = self.get_pitch_label(l, color)
                 text_width, text_height = text.get_size()
-                text_x = int(line_coords[1][0]) - (text_width + int(width / 100))
+                text_x = int(line_coords[1][0]) - (text_width + text_margin)
                 text_screen_x = text_x - x_offset
-                
+
                 if left_bound <= text_screen_x <= right_bound:
-                    self.surface.blit(text, (text_x, int(line_coords[1][1]) - text_height / 2))
+                    surface.blit(text, (text_x, int(line_coords[1][1]) - text_height / 2))
 
 
     def draw_center(self,smartdisplay, x_offset, y_offset):
         '''
         Draw the center circle.
         '''
-        center_x = x_offset + self.width // 2
-        center_y = y_offset + self.height // 2
+        center_x = self.width // 2
+        center_y = self.height // 2
 
         if self.center_circle_mode == 1:
             pygame.draw.circle(
@@ -408,163 +435,122 @@ class horizon_v2(Module):
                 3,
             )
             pygame.draw.line(
-                smartdisplay.pygamescreen,
+                self.surface,
                 self.MainColor,
                 [center_x + 10, center_y + 20],
                 [center_x + 20, center_y],
                 3,
             )
             pygame.draw.line(
-                smartdisplay.pygamescreen,
+                self.surface,
                 self.MainColor,
                 [center_x + 35, center_y],
                 [center_x + 20, center_y],
                 3,
             )
 
+    def get_true_heading(self):
+        '''
+        Aircraft heading referenced to TRUE north (so it can be compared with GPS ground track and
+        ADS-B bearings, which are both true). IMU heading is magnetic, so declination is added.
+        Falls back to GPS ground track if there is no heading. Returns None if neither is available.
+        '''
+        mag_heading = self.imuData.mag_head if self.imuData.mag_head is not None else self.imuData.yaw
+        if mag_heading is not None:
+            return (mag_heading + self.gpsData.get_mag_decl()) % 360
+        return self.gpsData.GndTrack
+
+    def get_flight_path_angle(self):
+        '''
+        Flight path angle (gamma) in degrees, derived from vertical speed and ground speed.
+        Returns None if vertical speed is unknown.
+        '''
+        if self.airData.VSI is None:
+            return None
+        speed_mph = self.gpsData.GndSpeed
+        if speed_mph is None:
+            speed_mph = self.airData.TAS if self.airData.TAS is not None else self.airData.IAS
+        if speed_mph is None or speed_mph < self.fpm_min_speed_mph:
+            return 0.0  # on the ground / too slow to get a meaningful angle.
+        return math.degrees(math.atan2(self.airData.VSI, speed_mph * 88.0))  # 1 mph = 88 ft/min
+
+    def get_drift_angle(self):
+        '''
+        Drift angle in degrees (GPS true ground track - true heading). Positive = track right of nose.
+        Returns 0 when there is no track or the aircraft is too slow for track to be valid.
+        '''
+        track = self.gpsData.GndTrack
+        if track is None or self.gpsData.GndSpeed is None or self.gpsData.GndSpeed < self.fpm_min_speed_mph:
+            return 0.0
+        heading = self.get_true_heading()
+        if heading is None:
+            return 0.0
+        return ((track - heading + 180) % 360) - 180
+
     def draw_flight_path(self, dataship:Dataship, smartdisplay, x_offset, y_offset):
         '''
-        Draw the flight path indicator.
+        Draw the flight path marker (FPM) and ghost FPM.
+        Vertical: flight path angle referenced to aircraft pitch (the waterline is the screen center),
+        using the same pixels/degree as the pitch ladder.
+        Horizontal: drift angle (true track vs true heading) using the same pixels/degree as the FOV.
+        Caged mode keeps the FPM centered laterally and shows the ghost FPM at the drift position.
         '''
-        # Check if VSI is None or yaw is None - if so, return without drawing
-        if self.airData.VSI is None or self.imuData.yaw is None:
+        fpa = self.get_flight_path_angle()
+        if fpa is None or self.imuData.pitch is None:
             return
-        
-        def mean(nums):
-            return int(sum(nums)) / max(len(nums), 1)
 
-        VSI_div = self.airData.VSI / 2
+        # smooth (exponential moving average)
+        a = self.fpm_smoothing
+        self.fpm_fpa = fpa if self.fpm_fpa is None else self.fpm_fpa + (fpa - self.fpm_fpa) * a
+        drift = self.get_drift_angle()
+        self.fpm_drift = drift if self.fpm_drift is None else self.fpm_drift + (drift - self.fpm_drift) * a
 
-        # flight path indicator  Default Caged Mode
-        if self.caged_mode == 1:
-            fpv_x = 0.0
-        else:
-            if self.gpsData.GndTrack is None:
-                return
-            fpv_x = ((((self.imuData.yaw - self.gpsData.GndTrack) + 180) % 360) - 180) * 1.5  + (
-                self.imuData.turn_rate * 5
-            )
-            self.readings.append(fpv_x)
-            fpv_x = mean(self.readings)
-            if len(self.readings) == self.max_samples:
-                self.readings.pop(0)
-            fpv_x = int(fpv_x) * 1.5
-        
-        use_heading = self.imuData.yaw
-        if self.imuData.yaw is None and self.gpsData.GndTrack is not None:
-            use_heading = self.gpsData.GndTrack
-
-        gfpv_x = ((((use_heading - self.imuData.yaw) + 180) % 360) - 180) * 1.5  + (
-            self.imuData.turn_rate * 5
-        )
-        self.readings1.append(gfpv_x)
-        gfpv_x = mean(self.readings1)
-        if len(self.readings1) == self.max_samples1:
-            self.readings1.pop(0)
+        px_per_deg_x = self.width / self.fov_x
+        px_per_deg_y = self.height / self.pxy_div
+        pitch = self.prev_horizon_state['pitch']  # same (smoothed) pitch used to draw the ladder
 
         center_x = self.width // 2
         center_y = self.height // 2
 
-        self.draw_circle(
-            self.surface,
-            self.flight_path_color,
-            (
-                center_x - (fpv_x),
-                center_y - (VSI_div),
-            ),
-            15,
-            4,
-        )
-        
-        pygame.draw.line(
-            self.surface,
-            self.flight_path_color,
-            [
-                center_x - (fpv_x) - 15,
-                center_y - (VSI_div),
-            ],
-            [
-                center_x - (fpv_x) - 30,
-                center_y - (VSI_div),
-            ],
-            2,
-        )
-        pygame.draw.line(
-            self.surface,
-            self.flight_path_color,
-            [
-                center_x - (fpv_x) + 15,
-                center_y - (VSI_div),
-            ],
-            [
-                center_x - (fpv_x) + 30,
-                center_y - (VSI_div),
-            ],
-            2,
-        )
-        pygame.draw.line(
-            self.surface,
-            self.flight_path_color,
-            [
-                center_x - (fpv_x),
-                center_y - (VSI_div) - 15,
-            ],
-            [
-                center_x - (fpv_x),
-                center_y - (VSI_div) - 30,
-            ],
-            2,
-        )
+        # clamp so the marker stays on the display at the edge of the FOV
+        max_x = max(0, center_x - 30)
+        max_y = max(0, center_y - 30)
+        gfpv_dx = max(-max_x, min(max_x, self.fpm_drift * px_per_deg_x))
+        fpv_dy = max(-max_y, min(max_y, (self.fpm_fpa - pitch) * px_per_deg_y))
+
+        fpv_x = center_x if self.caged_mode == 1 else center_x + gfpv_dx
+        fpv_y = center_y - fpv_dy
+        color = self.flight_path_color
+
+        self.draw_circle(self.surface, color, (fpv_x, fpv_y), 15, 4)
+        pygame.draw.line(self.surface, color, [fpv_x - 15, fpv_y], [fpv_x - 30, fpv_y], 2)
+        pygame.draw.line(self.surface, color, [fpv_x + 15, fpv_y], [fpv_x + 30, fpv_y], 2)
+        pygame.draw.line(self.surface, color, [fpv_x, fpv_y - 15], [fpv_x, fpv_y - 30], 2)
+
         if self.caged_mode == 1:
-            pygame.draw.line(
-                self.surface,
-                self.flight_path_color,
-                [
-                    center_x - (gfpv_x) - 15,
-                    center_y - (VSI_div),
-                ],
-                [
-                    center_x - (gfpv_x) - 30,
-                    center_y - (VSI_div),
-                ],
-                2,
-            )
-            pygame.draw.line(
-                self.surface,
-                self.flight_path_color,
-                [
-                    center_x - (gfpv_x) + 15,
-                    center_y - (VSI_div),
-                ],
-                [
-                    center_x - (gfpv_x) + 30,
-                    center_y - (VSI_div),
-                ],
-                2,
-            )
-            pygame.draw.line(
-                self.surface,
-                self.flight_path_color,
-                [
-                    center_x - (gfpv_x),
-                    center_y - (VSI_div) - 15,
-                ],
-                [
-                    center_x - (gfpv_x),
-                    center_y - (VSI_div) - 30,
-                ],
-                2,
-            )
+            # ghost FPM at the actual (uncaged) drift position
+            gfpv_x = center_x + gfpv_dx
+            pygame.draw.line(self.surface, color, [gfpv_x - 15, fpv_y], [gfpv_x - 30, fpv_y], 2)
+            pygame.draw.line(self.surface, color, [gfpv_x + 15, fpv_y], [gfpv_x + 30, fpv_y], 2)
+            pygame.draw.line(self.surface, color, [gfpv_x, fpv_y - 15], [gfpv_x, fpv_y - 30], 2)
 
     # called every redraw for this screen module
     def draw(self, dataship:Dataship, smartdisplay, pos=(0, 0)):
         '''
         Draw method to draw all the elements of the horizon.
+        Draws directly onto the display (through a subsurface at pos) so there is no full size
+        surface to clear and blit every frame.
         '''
         x, y = pos
-        
-        # Clear the surface before drawing
-        self.surface.fill((0, 0, 0, 0))
+
+        self.surface = self.getDrawSurface(pos)
+        use_offscreen = self.surface is None
+        if use_offscreen:
+            # module is partly off the top/left of the screen. fall back to an offscreen surface.
+            if self.offscreen_surface is None or self.offscreen_surface.get_size() != (self.width, self.height):
+                self.offscreen_surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+            self.surface = self.offscreen_surface
+            self.surface.fill((0, 0, 0, 0))
 
         if self.imuData.roll is None or self.imuData.pitch is None or self.imuData.yaw is None:
             # draw a red X on the screen.
@@ -585,21 +571,21 @@ class horizon_v2(Module):
             camera_pitch = 0
             camera_roll = 0
             camera_yaw = 0
-            
+
             if self.camera_head_imu is not None and self.camera_head_imu.pitch is not None and self.camera_head_imu.roll is not None and self.camera_head_imu.yaw is not None:
                 camera_pitch = -self.camera_head_imu.pitch
                 camera_roll = self.camera_head_imu.roll
                 camera_yaw = ((self.camera_head_imu.yaw - self.imuData.yaw + 180) % 360) - 180
 
                 # Draw the horizon line from camera perspective
-                self.draw_horizon_line(self, camera_yaw, camera_pitch, camera_roll)
+                self.draw_horizon_line(dataship, camera_yaw, camera_pitch, camera_roll)
 
                 # Apply camera offsets to aircraft attitude for the rest of the display
                 adjusted_pitch = self.imuData.pitch - camera_pitch
                 adjusted_roll = self.imuData.roll - camera_roll
             else:
                 adjusted_pitch = self.imuData.pitch
-                adjusted_roll = self.imuData.roll   
+                adjusted_roll = self.imuData.roll
 
             # Draw aircraft horizon lines with adjusted angles
             self.draw_aircraft_horz_lines(
@@ -607,15 +593,8 @@ class horizon_v2(Module):
                 self.height,
                 ((self.width // 2), self.height // 2),
                 self.ahrs_line_deg,
-                type('AdjustedAircraft', (), {
-                    'pitch': adjusted_pitch,
-                    'roll': adjusted_roll,
-                    'mag_head': self.imuData.yaw,
-                    'turn_rate': self.imuData.turn_rate,
-                    'vsi': self.airData.VSI,
-                    'traffic': self.targetData,
-                    'gndtrack': self.gpsData.GndTrack
-                }),
+                adjusted_pitch,
+                adjusted_roll,
                 self.MainColor,
                 self.line_thickness,
                 self.line_mode,
@@ -625,82 +604,75 @@ class horizon_v2(Module):
             )
 
             # Only show targets if camera is roughly aligned with aircraft heading
-            if self.show_targets and (camera_yaw is None or abs(camera_yaw) < 45):
-                list(map(lambda t: self.draw_target(t, dataship), 
-                        filter(lambda t: t.dist is not None and t.dist < self.target_distance_threshold and t.brng is not None, 
-                                self.targetData.targets)))
+            if self.show_targets and abs(camera_yaw) < 45:
+                heading = self.get_true_heading()
+                if heading is not None:
+                    for t in self.targetData.targets:
+                        if t.dist is not None and t.dist < self.target_distance_threshold and t.brng is not None:
+                            self.draw_target(t, heading)
 
             # Draw center and flight path
             self.draw_center(smartdisplay, x, y)
-            if camera_yaw is None or abs(camera_yaw) < 45:  # Only show flight path when looking forward
+            if abs(camera_yaw) < 45:  # Only show flight path when looking forward
                 self.draw_flight_path(dataship, smartdisplay, x, y)
 
-        # Blit the entire surface to the screen at the specified position
-        self.pygamescreen.blit(self.surface, pos)
+        if use_offscreen:
+            self.pygamescreen.blit(self.surface, pos)
 
-    def draw_target(self, t, dataship):
+    def draw_target(self, t, heading):
         '''
-        Draw a target on the screen.
+        Draw a traffic target on the HUD.
+        heading is the aircraft TRUE heading, because target bearings (t.brng) are true.
+        Target position uses the same geometry as the pitch ladder (pixels/degree, pitch and roll)
+        so targets stay registered to the ladder.
         '''
-        if self.imuData.yaw is None:
-            return
-            
-        heading_to_use = self.imuData.yaw
-        # if aircraft.mag_head is None then check if aircraft.gndtrack is not None
-        if self.imuData.yaw is None and self.gpsData.GndTrack is not None:
-            heading_to_use = self.gpsData.GndTrack
-        else:
-            # else can't use either so don't draw it.
-            return
-
         # Calculate the relative bearing to the target
-        relative_bearing = (t.brng - heading_to_use + 180) % 360 - 180
+        relative_bearing = (t.brng - heading + 180) % 360 - 180
 
         # Check if the target is within the field of view
         if abs(relative_bearing) > self.fov_x / 2:
             return  # Target is outside the field of view, don't draw it
 
-        if t.altDiff is not None and self.imuData.pitch is not None and self.imuData.roll is not None:
-            # Convert distances to meters
-            alt_diff_meters = t.altDiff * 0.3048
-            dist_meters = t.dist * 1609.34
-            # Calculate the angle to the target relative to the horizon in radians
-            angle_to_target = math.atan2(alt_diff_meters, dist_meters)
-            # Adjust for aircraft pitch
-            adjusted_angle = angle_to_target - math.radians(self.imuData.pitch)
-            # Calculate the vertical position on the screen
-            vertical_position = self.yCenter - (math.tan(adjusted_angle) * (self.height / 2))
-            # Adjust for aircraft roll
-            roll_radians = math.radians(self.imuData.roll)
-            
-            xx = self.xCenter + relative_bearing * (self.width / self.fov_x)
-            
-            rotated_x = (xx - self.xCenter) * math.cos(roll_radians) - (vertical_position - self.yCenter) * math.sin(roll_radians) + self.xCenter
-            rotated_y = (xx - self.xCenter) * math.sin(roll_radians) + (vertical_position - self.yCenter) * math.cos(roll_radians) + self.yCenter
+        if t.altDiff is None:
+            return
 
-            # Apply smoothing
-            target_key = t.callsign
-            current_pos = (rotated_x, rotated_y)
-            
-            if target_key not in self.target_positions:
-                self.target_positions[target_key] = current_pos
-            else:
-                # Interpolate between old and new positions
-                old_x, old_y = self.target_positions[target_key]
-                smooth_x = old_x + (rotated_x - old_x) * self.target_smoothing
-                smooth_y = old_y + (rotated_y - old_y) * self.target_smoothing
-                self.target_positions[target_key] = (smooth_x, smooth_y)
+        # elevation angle to the target (both in feet). t.dist is in statute miles.
+        elevation_deg = math.degrees(math.atan2(t.altDiff, t.dist * 5280.0))
+        pitch = self.prev_horizon_state['pitch']
+        roll = self.prev_horizon_state['roll']
 
-            # Use smoothed position for drawing
-            xx, yy = self.target_positions[target_key]
+        # position relative to the screen center before roll (same scale as the ladder)
+        dx = relative_bearing * (self.width / self.fov_x)
+        dy = -(elevation_deg - pitch) * (self.height / self.pxy_div)
 
-            # Draw target using smoothed positions
-            pygame.draw.circle(self.surface, (200,255,255), (int(xx), int(yy)), 6, 0)
-            labelCallsign = self.font_target.render(t.callsign, False, (200,255,255), (0,0,0))
-            labelCallsign_rect = labelCallsign.get_rect()
-            self.surface.blit(labelCallsign, (int(xx) + 10, int(yy)))
-            labelAngle = self.font_target.render(f"angle: {adjusted_angle:.2f}", False, (200,255,255), (0,0,0))
-            self.surface.blit(labelAngle, (int(xx) + 10, int(yy) + labelCallsign_rect.height))
+        # rotate with the ladder roll
+        roll_rad = math.radians(roll)
+        cos_r = math.cos(roll_rad)
+        sin_r = math.sin(roll_rad)
+        rotated_x = self.xCenter + dx * cos_r + dy * sin_r
+        rotated_y = self.yCenter - dx * sin_r + dy * cos_r
+
+        # Apply smoothing
+        target_key = t.callsign
+        if target_key not in self.target_positions:
+            self.target_positions[target_key] = (rotated_x, rotated_y)
+        else:
+            # Interpolate between old and new positions
+            old_x, old_y = self.target_positions[target_key]
+            smooth_x = old_x + (rotated_x - old_x) * self.target_smoothing
+            smooth_y = old_y + (rotated_y - old_y) * self.target_smoothing
+            self.target_positions[target_key] = (smooth_x, smooth_y)
+
+        # Use smoothed position for drawing
+        xx, yy = self.target_positions[target_key]
+
+        # Draw target using smoothed positions
+        pygame.draw.circle(self.surface, (200,255,255), (int(xx), int(yy)), 6, 0)
+        labelCallsign = self.font_target.render(t.callsign, False, (200,255,255), (0,0,0))
+        labelCallsign_rect = labelCallsign.get_rect()
+        self.surface.blit(labelCallsign, (int(xx) + 10, int(yy)))
+        labelInfo = self.font_target.render(f"{t.dist:.1f}mi {t.altDiff:+,}ft", False, (200,255,255), (0,0,0))
+        self.surface.blit(labelInfo, (int(xx) + 10, int(yy) + labelCallsign_rect.height))
 
 
     # cycle through the modes.
@@ -792,7 +764,7 @@ class horizon_v2(Module):
                 "description": ""
             },
             "fov_x": {
-                "type": "int",
+                "type": "float",
                 "default": self.fov_x,
                 "min": 5,
                 "max": 60,
@@ -916,35 +888,6 @@ class horizon_v2(Module):
             (x2, y2),
             self.horizon_line_thickness
         )
-
-#############################################
-## Class: Point
-## used for graphical points.
-class Point:
-    # constructed using a normal tupple
-    def __init__(self, point_t=(0, 0)):
-        self.x = float(point_t[0])
-        self.y = float(point_t[1])
-
-    # define all useful operators
-    def __add__(self, other):
-        return Point((self.x + other.x, self.y + other.y))
-
-    def __sub__(self, other):
-        return Point((self.x - other.x, self.y - other.y))
-
-    def __mul__(self, scalar):
-        return Point((self.x * scalar, self.y * scalar))
-
-    def __div__(self, scalar):
-        return Point((self.x / scalar, self.y / scalar))
-
-    def __len__(self):
-        return int(math.sqrt(self.x ** 2 + self.y ** 2))
-
-    # get back values in original tuple format
-    def get(self):
-        return (self.x, self.y)
 
 # vi: modeline tabstop=8 expandtab shiftwidth=4 softtabstop=4 syntax=python
 

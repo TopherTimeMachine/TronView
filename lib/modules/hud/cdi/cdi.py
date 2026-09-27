@@ -38,7 +38,7 @@ class cdi(Module):
         self.font = pygame.font.SysFont(
             None, int(self.height / 20)
         )
-        self.surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        self.offscreen_surface = None  # only used if we can't draw directly to the display
 
         self.MainColor = (255, 255, 255)  # CDI Needles color = White 
 
@@ -60,10 +60,18 @@ class cdi(Module):
 
     # called every redraw for the mod
     def draw(self, dataship:Dataship, smartdisplay, pos):
+        # Nothing to draw if no nav source is active.
+        if self.navData.HSISource != 1 and self.navData.VNAVSource != 1:
+            return
 
-        self.surface.fill((0, 0, 0, 0))  # clear surface
-
-        x,y = pos
+        # draw directly onto the display at pos (no full size surface to clear and blit).
+        self.surface = self.getDrawSurface(pos)
+        use_offscreen = self.surface is None
+        if use_offscreen:
+            if self.offscreen_surface is None or self.offscreen_surface.get_size() != (self.width, self.height):
+                self.offscreen_surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+            self.surface = self.offscreen_surface
+            self.surface.fill((0, 0, 0, 0))
         
         new_y_center = self.yCenter + self.y_offset
          
@@ -99,8 +107,8 @@ class cdi(Module):
                 4,                              
             )
 
-        # Draw the surface at the given position
-        self.pygamescreen.blit(self.surface, pos)
+        if use_offscreen:
+            self.pygamescreen.blit(self.surface, pos)
 
     # cycle through NAV sources
     def cycleNavSource(self,dataship):

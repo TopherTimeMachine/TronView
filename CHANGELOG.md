@@ -1,5 +1,29 @@
 # Changelog
 
+## [Unreleased]
+
+Performance (HUD):
+- horizon_v2, cdi, gcross, trafficscope, traffic_bar draw directly onto the display (Module.getDrawSurface) instead of clearing and blitting a full size surface every frame.
+- horizon_v2: roll trig computed once per frame, pitch ladder numbers cached, dashed lines without temp objects, off screen ladder lines skipped.
+- rollindicator: only the small pointer is rotated and rotations are cached. pointer now positioned on the scale.
+- heading: tape surface reused instead of reallocated each frame; single blit.
+- graphic mode: dropdown overlay cached. frame profiler in view mode (press d).
+
+Fixes:
+- FPM: vertical position is now flight path angle (from vertical speed and ground speed) referenced to pitch. horizontal drift compares TRUE heading (magnetic + declination) with GPS true track. ghost FPM was always zero drift. no longer crashes if turn rate is missing.
+- HUD traffic targets were never drawn (inverted heading check). now use true heading and the same geometry as the pitch ladder.
+- magnetic vs true: traffic scope, traffic bar and heading tape track marker now apply declination (GPSData.get_mag_decl()).
+- horizon_v2 center marker drew at the wrong position when the module was not at 0,0.
+- traffic bar: x position was offset twice, no 0/360 wrap.
+- trafficscope: targets outside the scope range are no longer drawn outside the rings.
+- ignore_traffic_beyond_distance is read from config again (old misspelled key still accepted).
+- targets cleanUp skipped entries while removing old targets.
+- stratux: ownship report altitude is pressure altitude (was stored as GPS altitude); geometric altitude message (11) now sets GPS altitude in feet; ground speed, traffic speed and IAS converted from knots to mph; AHRS VSI/pressure altitude were written to the wrong field names.
+- "nm" text format converted miles with the km factor.
+- gun cross "NO VSI DATA" message never showed.
+- fov_x is read as a float (was truncated to int).
+- mouse wheel before any click crashed view mode; touch events had no button.
+
 ## [0.0.35] - 2026-02-22
 
 - fixes for g3x and serial port detect

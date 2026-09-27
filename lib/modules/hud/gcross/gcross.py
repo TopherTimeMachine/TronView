@@ -43,7 +43,7 @@ class gcross(Module):
         self.font = pygame.font.SysFont(
             None, int(self.height / 20)
         )
-        self.surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        self.offscreen_surface = None  # only used if we can't draw directly to the display
 
         self.GColor = ( 0,255, 0)  # Gun Cross Color = Yellow
         self.y_offset = hud_utils.readConfigInt("HUD", "Horizon_Offset", 0)  #  Horizon/Waterline Pixel Offset
@@ -54,7 +54,7 @@ class gcross(Module):
 
         self.GColor_color = ( 0,255, 0)  # Gun Cross Color = Yellow
 
-        self.TargetWingSpan - 0
+        self.TargetWingSpan = 0
 
         self.imuData = IMUData()
         self.airData = AirData()
@@ -65,10 +65,14 @@ class gcross(Module):
 
     # called every redraw for the mod
     def draw(self, dataship, smartdisplay, pos):
-        # clear the surface transparent
-        self.surface.fill((0, 0, 0, 0))  # clear surface
-
-        x, y = pos
+        # draw directly onto the display at pos (no full size surface to clear and blit).
+        self.surface = self.getDrawSurface(pos)
+        use_offscreen = self.surface is None
+        if use_offscreen:
+            if self.offscreen_surface is None or self.offscreen_surface.get_size() != (self.width, self.height):
+                self.offscreen_surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+            self.surface = self.offscreen_surface
+            self.surface.fill((0, 0, 0, 0))
 
         
         # Set circle radius and line width
@@ -120,6 +124,8 @@ class gcross(Module):
                 text = self.font.render("NO VSI DATA", True, self.GColor_color)
                 text_rect = text.get_rect(center=(self.width / 2, self.height / 2))
                 self.surface.blit(text, text_rect)
+                if use_offscreen:
+                    smartdisplay.pygamescreen.blit(self.surface, pos)
                 return
 
             # Adjust all drawing operations to use self.surface instead of smartdisplay.pygamescreen or self.pygamescreen
@@ -146,8 +152,8 @@ class gcross(Module):
             end_angle = math.radians(gun_arc + 5)
             pygame.draw.arc(self.surface, color, (pipper_posn[0] - green_arc_radius, pipper_posn[1] - green_arc_radius, green_arc_radius * 2, green_arc_radius * 2), start_angle, end_angle, green_arc_width)
 
-        # Draw the surface to the pygamescreen at the specified position
-        smartdisplay.pygamescreen.blit(self.surface, pos)
+        if use_offscreen:
+            smartdisplay.pygamescreen.blit(self.surface, pos)
 
     # cycle through the modes.
     def cycleGunSight(self):
